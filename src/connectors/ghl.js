@@ -18,7 +18,7 @@ function client() {
       Version: GHL_API_VERSION,
       Accept: 'application/json',
     },
-    timeout: 30000,
+    timeout: 45000,
   });
 }
 
@@ -30,9 +30,10 @@ async function withRetry(fn, retries = 3) {
     } catch (err) {
       lastErr = err;
       const status = err.response?.status;
-      if (status === 429 || status >= 500) {
-        const wait = Math.min(1000 * Math.pow(2, i), 10000);
-        console.log(`GHL retry ${i + 1}/${retries} after ${wait}ms (status ${status})`);
+      const isTimeout = err.code === 'ECONNABORTED' || /timeout/i.test(err.message || '');
+      if (status === 429 || status >= 500 || isTimeout) {
+        const wait = Math.min(1500 * Math.pow(2, i), 15000);
+        console.log(`GHL retry ${i + 1}/${retries} after ${wait}ms (${status || err.code || 'timeout'})`);
         await new Promise(r => setTimeout(r, wait));
         continue;
       }
@@ -43,60 +44,77 @@ async function withRetry(fn, retries = 3) {
 }
 
 /**
- * Search conversations in a date range.
- * GHL's /conversations/search endpoint supports date filtering.
+ * Search conversations with proper date-based cursor pagination.
+ * sort=desc + startAfterDate cursor = we always get newest first
+ * and can stop cleanly once we pass the start of the window.
  */
-export async function searchConversations({ locationId, startDate, endDate, limitN = 100 }) {
+export async function searchConversations({ locationId, startDate, endDate, limitN = 100, debug = false }) {
   const c = client();
   const all = [];
-  let page = 1;
   const startMs = startDate ? new Date(startDate).getTime() : null;
   const endMs = endDate ? new Date(endDate).getTime() : null;
 
-  while (true) {
+  let startAfter = null;
+  let startAfterId = null;
+  let pagesFetched = 0;
+  const MAX_PAGES = 500;
+
+  while (pagesFetched < MAX_PAGES) {
+    const params = {
+      locationId,
+      limit: limitN,
+      sort: 'desc',
+      sortBy: 'last_message_date',
+    };
+    if (startAfter) params.startAfterDate = startAfter;
+    if (startAfterId) params.startAfterId = startAfterId;
+
     const res = await limit(() => withRetry(() =>
-      c.get('/conversations/search', {
-        params: {
-          locationId,
-          limit: limitN,
-          page,
-          sort: 'desc',
-          sortBy: 'last_message_date',
-        },
-      })
+      c.get('/conversations/search', { params })
     ));
 
     const conversations = res.data?.conversations || [];
     if (conversations.length === 0) break;
+    pagesFetched++;
 
-    // Filter by date range (client-side, since GHL date filters are inconsistent)
-    let outOfRange = false;
+    if (debug && pagesFetched === 1) {
+      console.log('     [debug] First conversation sample:', JSON.stringify(conversations[0], null, 2).substring(0, 800));
+    }
+
+    let pastWindow = false;
     for (const conv of conversations) {
       const lastMs = conv.lastMessageDate ? new Date(conv.lastMessageDate).getTime() : 0;
+      if (endMs && lastMs > endMs) continue;
       if (startMs && lastMs && lastMs < startMs) {
-        outOfRange = true;
+        pastWindow = true;
         continue;
       }
-      if (endMs && lastMs && lastMs > endMs) continue;
       all.push(conv);
     }
 
+    if (pastWindow) break;
     if (conversations.length < limitN) break;
-    if (outOfRange) break; // we've gone past the start date
-    page++;
-    if (page > 100) {
-      console.warn('GHL search: hit 100-page safety limit');
-      break;
+
+    const last = conversations[conversations.length - 1];
+    startAfter = last.lastMessageDate;
+    startAfterId = last.id;
+
+    if (pagesFetched % 10 === 0) {
+      console.log(`     [progress] fetched ${pagesFetched} pages, ${all.length} convos in window`);
     }
+  }
+
+  if (pagesFetched >= MAX_PAGES) {
+    console.warn(`     [warning] hit MAX_PAGES (${MAX_PAGES}). May not have all conversations.`);
   }
 
   return all;
 }
 
 /**
- * Get all messages in a conversation.
+ * Get all messages in a conversation. Tolerant of different response shapes.
  */
-export async function getMessages(conversationId) {
+export async function getMessages(conversationId, debug = false) {
   const c = client();
   const all = [];
   let lastMessageId = null;
@@ -109,13 +127,23 @@ export async function getMessages(conversationId) {
       c.get(`/conversations/${conversationId}/messages`, { params })
     ));
 
-    const messages = res.data?.messages?.messages || res.data?.messages || [];
+    let messages = [];
+    const d = res.data;
+    if (Array.isArray(d?.messages?.messages)) messages = d.messages.messages;
+    else if (Array.isArray(d?.messages)) messages = d.messages;
+    else if (Array.isArray(d)) messages = d;
+
+    if (debug && all.length === 0 && messages.length > 0) {
+      console.log('     [debug] First message sample:', JSON.stringify(messages[0], null, 2));
+      console.log('     [debug] Response keys:', Object.keys(d || {}));
+    }
+
     if (messages.length === 0) break;
     all.push(...messages);
 
     if (messages.length < 100) break;
     lastMessageId = messages[messages.length - 1].id;
-    if (all.length > 1000) break; // safety
+    if (all.length > 1000) break;
   }
 
   return all;
