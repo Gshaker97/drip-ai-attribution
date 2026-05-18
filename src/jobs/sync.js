@@ -9,14 +9,16 @@ import { matchContactToHcp, classifyAttribution } from '../lib/matching.js';
 const ATTRIBUTION_WINDOW_DAYS = parseInt(process.env.ATTRIBUTION_WINDOW_DAYS || '30', 10);
 const INITIAL_PULL_DAYS = parseInt(process.env.INITIAL_PULL_DAYS || '30', 10);
 
-/**
- * Run a full sync. Returns the sync run record.
- *
- * @param {object} opts
- * @param {string} opts.triggeredBy - 'manual' or 'cron'
- * @param {number} [opts.daysBack] - How many days back to pull
- */
-export async function runSync({ triggeredBy = 'manual', daysBack } = {}) {
+// In-memory concurrency lock - prevents double-clicks from starting parallel syncs
+let SYNC_IN_PROGRESS = false;
+
+export async function runSync({ triggeredBy = 'manual', daysBack, debug = false } = {}) {
+  if (SYNC_IN_PROGRESS) {
+    console.log(`[skip] Sync already running, ignoring ${triggeredBy} trigger`);
+    return { skipped: true, reason: 'already_running' };
+  }
+  SYNC_IN_PROGRESS = true;
+
   const days = daysBack || INITIAL_PULL_DAYS;
   const endDate = new Date();
   const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -28,26 +30,22 @@ export async function runSync({ triggeredBy = 'manual', daysBack } = {}) {
   );
   const runId = runRes.rows[0].id;
 
-  console.log(`\n=== SYNC RUN ${runId} (${triggeredBy}) ===`);
+  console.log(`\n=== SYNC RUN ${runId} (${triggeredBy}, debug=${debug}) ===`);
   console.log(`Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
   try {
-    // STEP 1: Sync HCP customers
     console.log('\n[1/4] Syncing HCP customers...');
     const customerCount = await syncHcpCustomers();
     console.log(`     ✓ ${customerCount} HCP customers cached`);
 
-    // STEP 2: Sync HCP jobs in window + buffer
     console.log('\n[2/4] Syncing HCP jobs...');
     const jobCount = await syncHcpJobs({ startDate, endDate });
     console.log(`     ✓ ${jobCount} HCP jobs cached`);
 
-    // STEP 3: Scan GHL conversations for MCTB events
     console.log('\n[3/4] Scanning GHL conversations for MCTB events...');
-    const mctbCount = await scanGhlConversations({ startDate, endDate });
+    const mctbCount = await scanGhlConversations({ startDate, endDate, debug });
     console.log(`     ✓ ${mctbCount} MCTB events found`);
 
-    // STEP 4: Compute attributions
     console.log('\n[4/4] Computing attributions...');
     const attrCount = await computeAttributions();
     console.log(`     ✓ ${attrCount} attributions computed`);
@@ -70,6 +68,8 @@ export async function runSync({ triggeredBy = 'manual', daysBack } = {}) {
       [runId, err.message]
     );
     throw err;
+  } finally {
+    SYNC_IN_PROGRESS = false;
   }
 }
 
@@ -113,12 +113,10 @@ async function syncHcpCustomers() {
     );
     count++;
   }
-
   return count;
 }
 
 async function syncHcpJobs({ startDate, endDate }) {
-  // Pull jobs from start of window through end + 60 days (to catch attribution window)
   const bufferEnd = new Date(endDate.getTime() + 60 * 24 * 60 * 60 * 1000);
   const bufferStart = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000);
 
@@ -163,20 +161,17 @@ async function syncHcpJobs({ startDate, endDate }) {
     );
     count++;
   }
-
   return count;
 }
 
 function parseAmount(val) {
   if (val === null || val === undefined) return null;
-  // HCP returns amounts in cents typically
   const n = Number(val);
   if (isNaN(n)) return null;
-  // If looks like cents (no decimal, large number), convert
   return n > 10000 && Number.isInteger(n) ? n / 100 : n;
 }
 
-async function scanGhlConversations({ startDate, endDate }) {
+async function scanGhlConversations({ startDate, endDate, debug = false }) {
   const locationId = process.env.GHL_LOCATION_ID;
   if (!locationId) throw new Error('GHL_LOCATION_ID is not set');
 
@@ -184,38 +179,52 @@ async function scanGhlConversations({ startDate, endDate }) {
     locationId,
     startDate,
     endDate,
+    debug,
   });
 
   console.log(`     Found ${conversations.length} conversations to scan`);
 
   let mctbCount = 0;
+  let scanned = 0;
+  let errored = 0;
+  let dumpedSample = false;
+
   for (const conv of conversations) {
+    scanned++;
+    if (scanned % 100 === 0) {
+      console.log(`     [progress] scanned ${scanned}/${conversations.length} convos, found ${mctbCount} MCTB so far, ${errored} errors`);
+    }
+
     try {
-      const messages = await ghl.getMessages(conv.id);
+      const messages = await ghl.getMessages(conv.id, debug && !dumpedSample);
+      if (debug && !dumpedSample && messages.length > 0) {
+        dumpedSample = true;
+        const firstOutbound = messages.find(m => String(m.direction || '').toLowerCase() === 'outbound');
+        if (firstOutbound) {
+          console.log('     [debug] First outbound message in any convo:', JSON.stringify(firstOutbound, null, 2));
+        }
+      }
       if (messages.length === 0) continue;
 
-      // Find the MCTB message
       const mctbMessage = messages.find(isMissedCallTextBack);
       if (!mctbMessage) continue;
 
-      const mctbSentAt = new Date(mctbMessage.dateAdded || mctbMessage.createdAt);
+      const mctbSentAt = new Date(
+        mctbMessage.dateAdded || mctbMessage.createdAt || mctbMessage.dateUpdated
+      );
       const { replied, firstReplyAt } = findFirstReply(messages, mctbSentAt);
 
-      // Get contact details
       const contactId = conv.contactId;
       let contact = null;
       try {
         contact = await ghl.getContact(contactId);
       } catch (e) {
-        console.warn(`     Could not fetch contact ${contactId}: ${e.message}`);
+        // ignore, fall back to conv-level data
       }
 
       const phone = contact?.phone || conv.phone || null;
       const phoneNorm = normalizePhone(phone);
-      if (!phoneNorm) {
-        console.warn(`     Skipping conversation ${conv.id} - no valid phone`);
-        continue;
-      }
+      if (!phoneNorm) continue;
 
       await query(
         `INSERT INTO mctb_events
@@ -245,15 +254,18 @@ async function scanGhlConversations({ startDate, endDate }) {
       );
       mctbCount++;
     } catch (err) {
-      console.warn(`     Error processing conversation ${conv.id}: ${err.message}`);
+      errored++;
+      if (errored <= 3) {
+        console.warn(`     [error] convo ${conv.id}: ${err.message}`);
+      }
     }
   }
 
+  console.log(`     [summary] scanned ${scanned}, found ${mctbCount} MCTB events, ${errored} errors`);
   return mctbCount;
 }
 
 async function computeAttributions() {
-  // Get all MCTB events where lead replied (saved leads)
   const events = await query(
     `SELECT * FROM mctb_events WHERE lead_replied = TRUE`
   );
@@ -271,7 +283,6 @@ async function computeAttributions() {
       new Date(event.mctb_sent_at).getTime() + ATTRIBUTION_WINDOW_DAYS * 24 * 60 * 60 * 1000
     );
 
-    // Find jobs for this customer within the attribution window
     const jobsRes = await query(
       `SELECT * FROM hcp_jobs
        WHERE hcp_customer_id = $1
@@ -326,13 +337,11 @@ async function computeAttributions() {
     );
     count++;
   }
-
   return count;
 }
 
-// Allow running directly: node src/jobs/sync.js
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runSync({ triggeredBy: 'cli' })
+  runSync({ triggeredBy: 'cli', debug: true })
     .then(() => pool.end())
     .catch(err => {
       console.error(err);
