@@ -4,7 +4,6 @@ import { runSync } from '../jobs/sync.js';
 
 export const apiRouter = Router();
 
-// Summary metrics for the dashboard
 apiRouter.get('/summary', async (req, res) => {
   try {
     const [events, replied, attributions, lastSync] = await Promise.all([
@@ -58,26 +57,15 @@ apiRouter.get('/summary', async (req, res) => {
   }
 });
 
-// Detailed list of attributed leads
 apiRouter.get('/attributions', async (req, res) => {
   try {
     const result = await query(`
       SELECT
-        a.id,
-        a.attribution_type,
-        a.first_job_amount,
-        a.first_job_date,
-        a.is_recurring,
-        a.total_jobs_in_window,
-        a.total_revenue_in_window,
-        a.match_method,
-        a.match_confidence,
-        e.contact_name,
-        e.contact_phone,
-        e.mctb_sent_at,
-        e.first_reply_at,
-        c.first_name AS hcp_first_name,
-        c.last_name AS hcp_last_name
+        a.id, a.attribution_type, a.first_job_amount, a.first_job_date,
+        a.is_recurring, a.total_jobs_in_window, a.total_revenue_in_window,
+        a.match_method, a.match_confidence,
+        e.contact_name, e.contact_phone, e.mctb_sent_at, e.first_reply_at,
+        c.first_name AS hcp_first_name, c.last_name AS hcp_last_name
       FROM attributions a
       JOIN mctb_events e ON e.id = a.mctb_event_id
       LEFT JOIN hcp_customers c ON c.hcp_customer_id = a.hcp_customer_id
@@ -90,22 +78,13 @@ apiRouter.get('/attributions', async (req, res) => {
   }
 });
 
-// All MCTB events (whether attributed or not)
 apiRouter.get('/mctb-events', async (req, res) => {
   try {
     const result = await query(`
       SELECT
-        e.id,
-        e.contact_name,
-        e.contact_phone,
-        e.contact_email,
-        e.mctb_sent_at,
-        e.lead_replied,
-        e.first_reply_at,
-        e.message_count,
-        a.attribution_type,
-        a.first_job_amount,
-        a.is_recurring
+        e.id, e.contact_name, e.contact_phone, e.contact_email,
+        e.mctb_sent_at, e.lead_replied, e.first_reply_at, e.message_count,
+        a.attribution_type, a.first_job_amount, a.is_recurring
       FROM mctb_events e
       LEFT JOIN attributions a ON a.mctb_event_id = e.id
       ORDER BY e.mctb_sent_at DESC
@@ -117,22 +96,20 @@ apiRouter.get('/mctb-events', async (req, res) => {
   }
 });
 
-// Manual sync trigger
 apiRouter.post('/sync', async (req, res) => {
   try {
     const days = req.body?.days ? parseInt(req.body.days, 10) : undefined;
-    // Run in background, return immediately
-    runSync({ triggeredBy: 'manual', daysBack: days }).catch(err => {
+    const debug = req.body?.debug === true || req.query?.debug === 'true' || req.query?.debug === '1';
+    runSync({ triggeredBy: debug ? 'manual-debug' : 'manual', daysBack: days, debug }).catch(err => {
       console.error('Background sync failed:', err);
     });
-    res.json({ status: 'started', message: 'Sync started in background' });
+    res.json({ status: 'started', message: 'Sync started in background', debug });
   } catch (err) {
     console.error('POST /sync error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Recent sync runs (for status display)
 apiRouter.get('/sync-runs', async (req, res) => {
   try {
     const result = await query(`
