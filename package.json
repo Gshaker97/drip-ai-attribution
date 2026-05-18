@@ -1,0 +1,25 @@
+{
+  "name": "drip-ai-attribution",
+  "version": "1.0.0",
+  "description": "Scans GHL Missed Call Text Back conversations and attributes them to HCP customer revenue",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "init-db": "node src/db/init.js",
+    "sync": "node src/jobs/sync.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "axios": "^1.7.2",
+    "libphonenumber-js": "^1.11.4",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3",
+    "p-limit": "^3.1.0"
+  }
+}
