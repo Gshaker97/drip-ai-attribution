@@ -7,107 +7,143 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header>
-    <div class="container header-row">
-      <div>
-        <h1>Drip Plumbing — AI Attribution</h1>
-        <p class="subtitle">Missed Call Text Back performance &amp; revenue</p>
+  <!-- ============================================ -->
+  <!-- CLIENT VIEW (screenshot-ready, hidden by default) -->
+  <!-- ============================================ -->
+  <div id="client-view" style="display:none;">
+    <div class="client-view-wrap">
+      <div class="client-view-header">
+        <h1 class="client-brand">Drip Plumbing</h1>
+        <p class="client-tagline">AI-Powered Missed Call Recovery</p>
       </div>
-      <div class="actions">
-        <span id="last-sync" class="muted">Loading…</span>
-        <button id="sync-btn" class="btn btn-primary">Sync Now</button>
-      </div>
-    </div>
-  </header>
 
-  <main class="container">
-    <section class="grid grid-cards">
-      <div class="card">
-        <div class="card-label">Missed-call texts sent</div>
-        <div class="card-value" id="metric-mctb">—</div>
-        <div class="card-sub">GHL native MCTB feature</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Leads saved</div>
-        <div class="card-value" id="metric-saved">—</div>
-        <div class="card-sub"><span id="metric-save-rate">—</span> reply rate</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Converted to HCP customer</div>
-        <div class="card-value" id="metric-converted">—</div>
-        <div class="card-sub"><span id="metric-conv-rate">—</span> conversion rate</div>
-      </div>
-      <div class="card highlight">
-        <div class="card-label">Revenue attributed</div>
-        <div class="card-value" id="metric-revenue">—</div>
-        <div class="card-sub">First job in 30-day window</div>
-      </div>
-    </section>
-
-    <section class="grid grid-split">
-      <div class="card">
-        <h3>New Acquisition</h3>
-        <p class="muted">Customers who didn't exist in HCP before the AI text</p>
-        <div class="stat-row"><span>Customers</span><strong id="new-count">—</strong></div>
-        <div class="stat-row"><span>First-job revenue</span><strong id="new-revenue">—</strong></div>
-        <div class="stat-row"><span>Became recurring</span><strong id="new-recurring">—</strong></div>
-        <div class="stat-row"><span>Total revenue (window)</span><strong id="new-total">—</strong></div>
-      </div>
-      <div class="card">
-        <h3>Reactivation</h3>
-        <p class="muted">Existing HCP customers who came back</p>
-        <div class="stat-row"><span>Customers</span><strong id="react-count">—</strong></div>
-        <div class="stat-row"><span>First-job revenue</span><strong id="react-revenue">—</strong></div>
-        <div class="stat-row"><span>Became recurring</span><strong id="react-recurring">—</strong></div>
-        <div class="stat-row"><span>Total revenue (window)</span><strong id="react-total">—</strong></div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="section-header">
-        <h3>Attributed leads</h3>
-        <div class="tab-bar">
-          <button class="tab active" data-tab="attributed">Attributed</button>
-          <button class="tab" data-tab="all">All MCTB events</button>
+      <div class="client-stats">
+        <div class="client-stat">
+          <div class="client-stat-value" id="cv-reached">—</div>
+          <div class="client-stat-label">Leads Reached</div>
+        </div>
+        <div class="client-stat">
+          <div class="client-stat-value" id="cv-contacted">—</div>
+          <div class="client-stat-label">Made Contact</div>
+        </div>
+        <div class="client-stat highlight">
+          <div class="client-stat-value" id="cv-revenue">—</div>
+          <div class="client-stat-label">Total Revenue Recovered</div>
         </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr id="table-head"></tr>
-          </thead>
-          <tbody id="table-body">
-            <tr><td colspan="8" class="empty">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
 
-    <section class="card">
-      <h3>Sync history</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Started</th>
-              <th>Triggered by</th>
-              <th>Status</th>
-              <th>MCTB events</th>
-              <th>Attributions</th>
-              <th>Duration</th>
-            </tr>
-          </thead>
-          <tbody id="sync-body">
-            <tr><td colspan="6" class="empty">No syncs yet.</td></tr>
-          </tbody>
-        </table>
+      <div class="client-view-footer">
+        <p class="muted" id="cv-period">Last 30 days</p>
+        <button id="exit-client-view" class="btn btn-secondary">← Back to Dashboard</button>
       </div>
-    </section>
+    </div>
+  </div>
 
-    <footer>
-      <p class="muted">Drip AI Attribution v1 · Auto-syncs every 3 days · <a href="/health">health</a></p>
-    </footer>
-  </main>
+  <!-- ============================================ -->
+  <!-- INTERNAL DASHBOARD -->
+  <!-- ============================================ -->
+  <div id="main-dashboard">
+    <header>
+      <div class="container header-row">
+        <div>
+          <h1>Drip Plumbing — AI Attribution</h1>
+          <p class="subtitle">Missed Call Text Back performance &amp; revenue</p>
+        </div>
+        <div class="actions">
+          <span id="last-sync" class="muted">Loading…</span>
+          <button id="client-view-btn" class="btn btn-secondary">📸 Client View</button>
+          <button id="sync-btn" class="btn btn-primary">Sync Now</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="grid grid-cards">
+        <div class="card">
+          <div class="card-label">Missed-call texts sent</div>
+          <div class="card-value" id="metric-mctb">—</div>
+          <div class="card-sub">GHL native MCTB feature</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Leads saved</div>
+          <div class="card-value" id="metric-saved">—</div>
+          <div class="card-sub"><span id="metric-save-rate">—</span> reply rate</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Converted to HCP customer</div>
+          <div class="card-value" id="metric-converted">—</div>
+          <div class="card-sub"><span id="metric-conv-rate">—</span> conversion rate</div>
+        </div>
+        <div class="card highlight">
+          <div class="card-label">Revenue attributed</div>
+          <div class="card-value" id="metric-revenue">—</div>
+          <div class="card-sub">First job in 30-day window</div>
+        </div>
+      </section>
+
+      <section class="grid grid-split">
+        <div class="card">
+          <h3>New Acquisition</h3>
+          <p class="muted">Customers who didn't exist in HCP before the AI text</p>
+          <div class="stat-row"><span>Customers</span><strong id="new-count">—</strong></div>
+          <div class="stat-row"><span>First-job revenue</span><strong id="new-revenue">—</strong></div>
+          <div class="stat-row"><span>Became recurring</span><strong id="new-recurring">—</strong></div>
+        </div>
+        <div class="card">
+          <h3>Reactivation</h3>
+          <p class="muted">Existing HCP customers who came back</p>
+          <div class="stat-row"><span>Customers</span><strong id="react-count">—</strong></div>
+          <div class="stat-row"><span>First-job revenue</span><strong id="react-revenue">—</strong></div>
+          <div class="stat-row"><span>Became recurring</span><strong id="react-recurring">—</strong></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-header">
+          <h3>Attributed leads</h3>
+          <div class="tab-bar">
+            <button class="tab active" data-tab="attributed">Attributed</button>
+            <button class="tab" data-tab="all">All MCTB events</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr id="table-head"></tr>
+            </thead>
+            <tbody id="table-body">
+              <tr><td colspan="8" class="empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Sync history</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Triggered by</th>
+                <th>Status</th>
+                <th>MCTB events</th>
+                <th>Attributions</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody id="sync-body">
+              <tr><td colspan="6" class="empty">No syncs yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        <p class="muted">Drip AI Attribution v1 · Auto-syncs every 3 days · <a href="/health">health</a></p>
+      </footer>
+    </main>
+  </div>
 
   <script src="/app.js"></script>
 </body>
