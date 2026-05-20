@@ -29,12 +29,15 @@ async function loadSummary() {
   document.getElementById('new-count').textContent = data.new_acquisition.count.toLocaleString();
   document.getElementById('new-revenue').textContent = fmtMoney(data.new_acquisition.first_job_revenue);
   document.getElementById('new-recurring').textContent = data.new_acquisition.recurring_count.toLocaleString();
-  document.getElementById('new-total').textContent = fmtMoney(data.new_acquisition.total_revenue);
 
   document.getElementById('react-count').textContent = data.reactivation.count.toLocaleString();
   document.getElementById('react-revenue').textContent = fmtMoney(data.reactivation.first_job_revenue);
   document.getElementById('react-recurring').textContent = data.reactivation.recurring_count.toLocaleString();
-  document.getElementById('react-total').textContent = fmtMoney(data.reactivation.total_revenue);
+
+  // Populate client view stats
+  document.getElementById('cv-reached').textContent = data.mctb_sent.toLocaleString();
+  document.getElementById('cv-contacted').textContent = data.leads_saved.toLocaleString();
+  document.getElementById('cv-revenue').textContent = fmtMoney(data.total_first_job_revenue);
 
   const lastSyncEl = document.getElementById('last-sync');
   if (data.last_sync) {
@@ -203,6 +206,17 @@ document.getElementById('sync-btn').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = 'Sync Now';
   }
+});
+
+// Client view toggle
+document.getElementById('client-view-btn').addEventListener('click', () => {
+  document.getElementById('main-dashboard').style.display = 'none';
+  document.getElementById('client-view').style.display = 'block';
+});
+
+document.getElementById('exit-client-view').addEventListener('click', () => {
+  document.getElementById('client-view').style.display = 'none';
+  document.getElementById('main-dashboard').style.display = 'block';
 });
 
 function refreshAll() {
