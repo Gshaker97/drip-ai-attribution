@@ -4,21 +4,53 @@ import { runSync } from '../jobs/sync.js';
 
 export const apiRouter = Router();
 
+// Build a date-range WHERE fragment + params for a given timestamp column.
+// from / to are 'YYYY-MM-DD' strings (either may be omitted).
+// `to` is inclusive of the entire day.
+function dateFilter(from, to, column) {
+  const clauses = [];
+  const params = [];
+  if (from) {
+    params.push(from);
+    clauses.push(`${column} >= $${params.length}::date`);
+  }
+  if (to) {
+    params.push(to);
+    clauses.push(`${column} < ($${params.length}::date + INTERVAL '1 day')`);
+  }
+  return { clauses, params };
+}
+
 apiRouter.get('/summary', async (req, res) => {
   try {
+    const { from, to } = req.query;
+
+    // Total MCTB events in range
+    const ev = dateFilter(from, to, 'mctb_sent_at');
+    const evWhere = ev.clauses.length ? ' WHERE ' + ev.clauses.join(' AND ') : '';
+
+    // Replied events in range (lead_replied = TRUE plus date)
+    const rp = dateFilter(from, to, 'mctb_sent_at');
+    const rpWhere = ' WHERE ' + ['lead_replied = TRUE', ...rp.clauses].join(' AND ');
+
+    // Attributions in range — joined to mctb_events so we can filter on sent date
+    const at = dateFilter(from, to, 'e.mctb_sent_at');
+    const atWhere = at.clauses.length ? ' WHERE ' + at.clauses.join(' AND ') : '';
+
     const [events, replied, attributions, lastSync] = await Promise.all([
-      query(`SELECT COUNT(*)::int AS n FROM mctb_events`),
-      query(`SELECT COUNT(*)::int AS n FROM mctb_events WHERE lead_replied = TRUE`),
+      query(`SELECT COUNT(*)::int AS n FROM mctb_events${evWhere}`, ev.params),
+      query(`SELECT COUNT(*)::int AS n FROM mctb_events${rpWhere}`, rp.params),
       query(`
         SELECT
-          attribution_type,
+          a.attribution_type,
           COUNT(*)::int AS count,
-          COALESCE(SUM(first_job_amount), 0)::numeric AS first_job_revenue,
-          COALESCE(SUM(total_revenue_in_window), 0)::numeric AS total_revenue,
-          COUNT(*) FILTER (WHERE is_recurring)::int AS recurring_count
-        FROM attributions
-        GROUP BY attribution_type
-      `),
+          COALESCE(SUM(a.first_job_amount), 0)::numeric AS first_job_revenue,
+          COALESCE(SUM(a.total_revenue_in_window), 0)::numeric AS total_revenue,
+          COUNT(*) FILTER (WHERE a.is_recurring)::int AS recurring_count
+        FROM attributions a
+        JOIN mctb_events e ON e.id = a.mctb_event_id${atWhere}
+        GROUP BY a.attribution_type
+      `, at.params),
       query(`SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT 1`),
     ]);
 
@@ -49,6 +81,7 @@ apiRouter.get('/summary', async (req, res) => {
       },
       total_first_job_revenue: parseFloat(newAcq.first_job_revenue || 0) + parseFloat(reactivation.first_job_revenue || 0),
       total_revenue: parseFloat(newAcq.total_revenue || 0) + parseFloat(reactivation.total_revenue || 0),
+      range: { from: from || null, to: to || null },
       last_sync: lastSync.rows[0] || null,
     });
   } catch (err) {
@@ -59,6 +92,10 @@ apiRouter.get('/summary', async (req, res) => {
 
 apiRouter.get('/attributions', async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const f = dateFilter(from, to, 'e.mctb_sent_at');
+    const where = f.clauses.length ? ' WHERE ' + f.clauses.join(' AND ') : '';
+
     const result = await query(`
       SELECT
         a.id, a.attribution_type, a.first_job_amount, a.first_job_date,
@@ -68,9 +105,9 @@ apiRouter.get('/attributions', async (req, res) => {
         c.first_name AS hcp_first_name, c.last_name AS hcp_last_name
       FROM attributions a
       JOIN mctb_events e ON e.id = a.mctb_event_id
-      LEFT JOIN hcp_customers c ON c.hcp_customer_id = a.hcp_customer_id
+      LEFT JOIN hcp_customers c ON c.hcp_customer_id = a.hcp_customer_id${where}
       ORDER BY a.first_job_date DESC NULLS LAST
-    `);
+    `, f.params);
     res.json(result.rows);
   } catch (err) {
     console.error('GET /attributions error:', err);
@@ -80,15 +117,19 @@ apiRouter.get('/attributions', async (req, res) => {
 
 apiRouter.get('/mctb-events', async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const f = dateFilter(from, to, 'e.mctb_sent_at');
+    const where = f.clauses.length ? ' WHERE ' + f.clauses.join(' AND ') : '';
+
     const result = await query(`
       SELECT
         e.id, e.contact_name, e.contact_phone, e.contact_email,
         e.mctb_sent_at, e.lead_replied, e.first_reply_at, e.message_count,
         a.attribution_type, a.first_job_amount, a.is_recurring
       FROM mctb_events e
-      LEFT JOIN attributions a ON a.mctb_event_id = e.id
+      LEFT JOIN attributions a ON a.mctb_event_id = e.id${where}
       ORDER BY e.mctb_sent_at DESC
-    `);
+    `, f.params);
     res.json(result.rows);
   } catch (err) {
     console.error('GET /mctb-events error:', err);
