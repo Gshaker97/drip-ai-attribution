@@ -5,6 +5,76 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Drip AI Attribution Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    .date-filter { display: inline-flex; align-items: center; gap: 6px; }
+    .date-input {
+      padding: 6px 8px;
+      border: 1px solid var(--border, #d0d5dd);
+      border-radius: 6px;
+      font: inherit;
+      background: var(--input-bg, #fff);
+      color: inherit;
+    }
+  </style>
+  <script>
+    // Date-range filter: appends ?from/&to to /api/ requests and reloads on Apply.
+    (function () {
+      function activeRange() {
+        const p = new URLSearchParams(location.search);
+        return { from: p.get('from') || '', to: p.get('to') || '' };
+      }
+      function decorate(url) {
+        const { from, to } = activeRange();
+        if ((!from && !to) || typeof url !== 'string') return url;
+        if (!/\/api\/(summary|attributions|mctb-events)/.test(url)) return url;
+        const u = new URL(url, location.origin);
+        if (from) u.searchParams.set('from', from);
+        if (to) u.searchParams.set('to', to);
+        return u.pathname + u.search;
+      }
+
+      // Patch fetch
+      const _fetch = window.fetch;
+      window.fetch = function (input, init) {
+        try {
+          if (typeof input === 'string') input = decorate(input);
+          else if (input && input.url) input = new Request(decorate(input.url), input);
+        } catch (e) {}
+        return _fetch.call(this, input, init);
+      };
+
+      // Patch XHR (in case app.js uses it)
+      const _open = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        try { url = decorate(url); } catch (e) {}
+        return _open.call(this, method, url, ...rest);
+      };
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const fromEl = document.getElementById('filter-from');
+        const toEl = document.getElementById('filter-to');
+        const applyEl = document.getElementById('apply-range');
+        const clearEl = document.getElementById('clear-range');
+        const { from, to } = activeRange();
+        if (fromEl) fromEl.value = from;
+        if (toEl) toEl.value = to;
+        if (clearEl && (from || to)) clearEl.style.display = '';
+
+        const period = document.getElementById('cv-period');
+        if (period && (from || to)) period.textContent = (from || '…') + ' → ' + (to || '…');
+
+        if (applyEl) applyEl.addEventListener('click', function () {
+          const p = new URLSearchParams();
+          if (fromEl && fromEl.value) p.set('from', fromEl.value);
+          if (toEl && toEl.value) p.set('to', toEl.value);
+          location.search = p.toString();
+        });
+        if (clearEl) clearEl.addEventListener('click', function () {
+          location.search = '';
+        });
+      });
+    })();
+  </script>
 </head>
 <body>
   <!-- ============================================ -->
@@ -51,6 +121,13 @@
         </div>
         <div class="actions">
           <span id="last-sync" class="muted">Loading…</span>
+          <div class="date-filter">
+            <input type="date" id="filter-from" class="date-input" aria-label="From date">
+            <span class="muted">→</span>
+            <input type="date" id="filter-to" class="date-input" aria-label="To date">
+            <button id="apply-range" class="btn btn-secondary">Apply</button>
+            <button id="clear-range" class="btn btn-secondary" style="display:none;">Clear</button>
+          </div>
           <button id="client-view-btn" class="btn btn-secondary">📸 Client View</button>
           <button id="sync-btn" class="btn btn-primary">Sync Now</button>
         </div>
